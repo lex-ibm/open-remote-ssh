@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import Log from './common/logger';
 import { getVSCodeServerConfig } from './serverConfig';
-import SSHConnection from './ssh/sshConnection';
+import {ISSHConnection} from "./ssh/sshConnectionCommons";
 
 export interface ServerInstallOptions {
     id: string;
@@ -37,12 +37,12 @@ export class ServerInstallError extends Error {
 
 const DEFAULT_DOWNLOAD_URL_TEMPLATE = 'https://github.com/VSCodium/vscodium/releases/download/${version}.${release}/vscodium-reh-${os}-${arch}-${version}.${release}.tar.gz';
 
-export async function installCodeServer(conn: SSHConnection, serverDownloadUrlTemplate: string | undefined, extensionIds: string[], envVariables: string[], platform: string | undefined, useSocketPath: boolean, logger: Log): Promise<ServerInstallResult> {
+export async function installCodeServer(conn: ISSHConnection, serverDownloadUrlTemplate: string | undefined, extensionIds: string[], envVariables: string[], platform: string | undefined, useSocketPath: boolean, logger: Log): Promise<ServerInstallResult> {
     let shell = 'powershell';
 
     // detect plaform and shell for windows
     if (!platform || platform === 'windows') {
-        const result = await conn.exec('uname -s');
+        const result = await conn.exec('echo "Platform: $(uname -s)"', (stdout: string) => stdout.includes('Platform: '));
 
         if (result.stdout) {
             if (result.stdout.includes('windows32')) {
@@ -128,14 +128,14 @@ export async function installCodeServer(conn: SSHConnection, serverDownloadUrlTe
             throw new ServerInstallError(`Not supported shell: ${shell}`);
         }
 
-        commandOutput = await conn.execPartial(command, (stdout: string) => endRegex.test(stdout));
+        commandOutput = await conn.exec(command, (stdout: string) => endRegex.test(stdout));
     } else {
         const installServerScript = generateBashInstallScript(installOptions);
 
         logger.trace('Server install command:', installServerScript);
-        // Fish shell does not support heredoc so let's workaround it using -c option,
+        // Fish shell does not support heredoc so lets workaround it, using -c option,
         // also replace single quotes (') within the script with ('\'') as there's no quoting within single quotes, see https://unix.stackexchange.com/a/24676
-        commandOutput = await conn.exec(`bash -c '${installServerScript.replace(/'/g, `'\\''`)}'`);
+        commandOutput = await conn.exec(`bash -c '${installServerScript.replace(/'/g, `'\\''`)}'`, (stdout: string) => stdout.includes(`${scriptId}: end`));
     }
 
     if (commandOutput.stderr) {

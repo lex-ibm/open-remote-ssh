@@ -104,6 +104,11 @@
 					"description": "**Experimental:** The name of the server binary, use this **only if** you are using a client without a corresponding server release",
 					"scope": "application",
 					"default": ""
+				},
+				"remote.SSH.experimental.useOpenSSH": {
+					"type": "boolean",
+					"description": "When true, the system's OpenSSH client will be used instead of the SSH2 node module. This is an experimental feature and may not work for all SSH servers.",
+					"default": false
 				}
 			}
 		},

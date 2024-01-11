@@ -4,76 +4,29 @@ import { EventEmitter } from 'events';
 import * as net from 'net';
 import * as fs from 'fs';
 import * as stream from 'stream';
-import { Client, ClientChannel, ClientErrorExtensions, ExecOptions, ShellOptions, ConnectConfig } from 'ssh2';
+import { Client, ClientChannel, ClientErrorExtensions, ExecOptions, ShellOptions } from 'ssh2';
 import { Server } from 'net';
 import { SocksConnectionInfo, createServer as createSocksServer } from 'simple-socks';
+import {ISSHConnection, SSHConnectConfig, SSHConstants, SSHDefaultOptions, SSHTunnelConfig} from "./sshConnectionCommons";
 
-export interface SSHConnectConfig extends ConnectConfig {
-    /** Optional Unique ID attached to ssh connection. */
-    uniqueId?: string;
-    /** Automatic retry to connect, after disconnect. Default true */
-    reconnect?: boolean;
-    /** Number of reconnect retry, after disconnect. Default 10 */
-    reconnectTries?: number;
-    /** Delay after which reconnect should be done. Default 5000ms */
-    reconnectDelay?: number;
-    /** Path to private key */
-    identity?: string | Buffer;
-}
-
-export interface SSHTunnelConfig {
-    /** Remote Address to connect */
-    remoteAddr?: string;
-    /** Local port to bind to. By default, it will bind to a random port, if not passed */
-    localPort?: number;
-    /** Remote Port to connect */
-    remotePort?: number;
-    /** Remote socket path to connect */
-    remoteSocketPath?: string;
-    socks?: boolean;
-    /**  Unique name */
-    name?: string;
-}
-
-const defaultOptions: Partial<SSHConnectConfig> = {
-    reconnect: false,
-    port: 22,
-    reconnectTries: 3,
-    reconnectDelay: 5000
-};
-
-const SSHConstants = {
-    'CHANNEL': {
-        SSH: 'ssh',
-        TUNNEL: 'tunnel',
-        X11: 'x11'
-    },
-    'STATUS': {
-        BEFORECONNECT: 'beforeconnect',
-        CONNECT: 'connect',
-        BEFOREDISCONNECT: 'beforedisconnect',
-        DISCONNECT: 'disconnect'
-    }
-};
-
-export default class SSHConnection extends EventEmitter {
+export default class SSH2Connection extends EventEmitter implements ISSHConnection {
     public config: SSHConnectConfig;
 
     private activeTunnels: { [index: string]: SSHTunnelConfig & { server: Server } } = {};
-    private __$connectPromise: Promise<SSHConnection> | null = null;
+    private __$connectPromise: Promise<SSH2Connection> | null = null;
     private __retries: number = 0;
     private __err: Error & ClientErrorExtensions & { code?: string } | null = null;
     private sshConnection: Client | null = null;
 
     constructor(options: SSHConnectConfig) {
         super();
-        this.config = Object.assign({}, defaultOptions, options);
+        this.config = Object.assign({}, SSHDefaultOptions, options);
         this.config.uniqueId = this.config.uniqueId || `${this.config.username}@${this.config.host}`;
     }
 
     /**
-      * Emit message on this channel
-      */
+     * Emit message on this channel
+     */
     override emit(channel: string, status: string, payload?: any): boolean {
         super.emit(channel, status, this, payload);
         return super.emit(`${channel}:${status}`, this, payload);
@@ -93,32 +46,7 @@ export default class SSHConnection extends EventEmitter {
     /**
      * Exec a command
      */
-    exec(cmd: string, params?: Array<string>, options: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
-        cmd += (Array.isArray(params) ? (' ' + params.join(' ')) : '');
-        return this.connect().then(() => {
-            return new Promise((resolve, reject) => {
-                this.sshConnection!.exec(cmd, options, (err, stream) => {
-                    if (err) {
-                        return reject(err);
-                    }
-                    let stdout = '';
-                    let stderr = '';
-                    stream.on('close', function () {
-                        return resolve({ stdout, stderr });
-                    }).on('data', function (data: Buffer | string) {
-                        stdout += data.toString();
-                    }).stderr.on('data', function (data: Buffer | string) {
-                        stderr += data.toString();
-                    });
-                });
-            });
-        });
-    }
-    
-    /**
-     * Exec a command
-     */
-    execPartial(cmd: string, tester: (stdout: string, stderr: string) => boolean, params?: Array<string>, options: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
+    exec(cmd: string, tester: (stdout: string, stderr: string) => boolean, params?: Array<string>, options: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
         cmd += (Array.isArray(params) ? (' ' + params.join(' ')) : '');
         return this.connect().then(() => {
             return new Promise((resolve, reject) => {
@@ -135,18 +63,18 @@ export default class SSHConnection extends EventEmitter {
                         }
                     }).on('data', function (data: Buffer | string) {
                         stdout += data.toString();
-                        
+
                         if (tester(stdout, stderr)) {
                             resolved = true;
-                            
+
                             return resolve({ stdout, stderr });
                         }
                     }).stderr.on('data', function (data: Buffer | string) {
                         stderr += data.toString();
-                        
+
                         if (tester(stdout, stderr)) {
                             resolved = true;
-                        
+
                             return resolve({ stdout, stderr });
                         }
                     });
@@ -183,7 +111,7 @@ export default class SSHConnection extends EventEmitter {
     /**
      * Close SSH Connection
      */
-    close(): Promise<void> {
+    disconnect(): Promise<void> {
         this.emit(SSHConstants.CHANNEL.SSH, SSHConstants.STATUS.BEFOREDISCONNECT);
         return this.closeTunnel().then(() => {
             if (this.sshConnection) {
@@ -196,7 +124,7 @@ export default class SSHConnection extends EventEmitter {
     /**
      * Connect the SSH Connection
      */
-    connect(c?: SSHConnectConfig): Promise<SSHConnection> {
+    connect(c?: SSHConnectConfig): Promise<SSH2Connection> {
         this.config = Object.assign(this.config, c);
         ++this.__retries;
 

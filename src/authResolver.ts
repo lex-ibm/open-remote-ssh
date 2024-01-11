@@ -8,7 +8,7 @@ import * as ssh2 from 'ssh2';
 import { ParsedKey } from 'ssh2-streams';
 import Log from './common/logger';
 import SSHDestination from './ssh/sshDestination';
-import SSHConnection, { SSHTunnelConfig } from './ssh/sshConnection';
+import {ISSHConnection, SSHConnectConfig, SSHTunnelConfig} from './ssh/sshConnectionCommons';
 import SSHConfiguration from './ssh/sshConfig';
 import { gatherIdentityFiles } from './ssh/identityFiles';
 import { untildify, exists as fileExists } from './common/files';
@@ -17,6 +17,8 @@ import { disposeAll } from './common/disposable';
 import { installCodeServer, ServerInstallError } from './serverSetup';
 import { isWindows } from './common/platform';
 import * as os from 'os';
+import SSH2Connection from "./ssh/ssh2Connection";
+import OpenSSHConnection from "./ssh/openSSHConnection";
 
 const PASSWORD_RETRY_COUNT = 3;
 const PASSPHRASE_RETRY_COUNT = 3;
@@ -50,8 +52,8 @@ interface SSHKey {
 
 export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode.Disposable {
 
-    private proxyConnections: SSHConnection[] = [];
-    private sshConnection: SSHConnection | undefined;
+    private proxyConnections: ISSHConnection[] = [];
+    private sshConnection: ISSHConnection | undefined;
     private sshAgentSock: string | undefined;
     private proxyCommandProcess: cp.ChildProcessWithoutNullStreams | undefined;
 
@@ -86,6 +88,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
         const remotePlatformMap = remoteSSHconfig.get<Record<string, string>>('remotePlatform', {});
         const remoteServerListenOnSocket = remoteSSHconfig.get<boolean>('remoteServerListenOnSocket', false)!;
         const connectTimeout = remoteSSHconfig.get<number>('connectTimeout', 60)!;
+        const useOpenSSH = remoteSSHconfig.get<boolean>('useOpenSSH', false)!;
 
         return vscode.window.withProgress({
             title: `Setting up SSH Host ${sshDest.hostname}`,
@@ -133,7 +136,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                         const proxyIdentityKeys = await gatherIdentityFiles(proxyIdentityFiles, this.sshAgentSock, proxyIdentitiesOnly, this.logger);
 
                         const proxyAuthHandler = this.getSSHAuthHandler(proxyUser, proxyhHostName, proxyIdentityKeys, preferredAuthentications);
-                        const proxyConnection = new SSHConnection({
+                        const proxyConnection = new SSH2Connection({
                             host: !proxyStream ? proxyhHostName : undefined,
                             port: !proxyStream ? proxyPort : undefined,
                             sock: proxyStream,
@@ -173,7 +176,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                 // Create final shh connection
                 const sshAuthHandler = this.getSSHAuthHandler(sshUser, sshHostName, identityKeys, preferredAuthentications);
 
-                this.sshConnection = new SSHConnection({
+                const connectConfig: SSHConnectConfig = {
                     host: !proxyStream ? sshHostName : undefined,
                     port: !proxyStream ? sshPort : undefined,
                     sock: proxyStream,
@@ -182,8 +185,23 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                     strictVendor: false,
                     agentForward,
                     agent,
-                    authHandler: (arg0, arg1, arg2) => (sshAuthHandler(arg0, arg1, arg2), undefined),
-                });
+                    authHandler: (arg0, arg1, arg2) => (sshAuthHandler(arg0, arg1, arg2), undefined)
+                };
+
+                if (useOpenSSH) {
+                    // Needed for the -D option
+                    const socksPort = await findRandomPort();
+                    this.socksTunnel = {
+                        name: `ssh_tunnel_socks_${socksPort}`,
+                        localPort: socksPort,
+                        socks: true
+                    };
+                    this.sshConnection = new OpenSSHConnection(connectConfig, this.socksTunnel);
+
+                } else {
+                    this.sshConnection = new SSH2Connection(connectConfig);
+                }
+
                 await this.sshConnection.connect();
 
                 const envVariables: Record<string, string | null> = {};
@@ -207,7 +225,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                     }
                 }
 
-                if (enableDynamicForwarding) {
+                if (enableDynamicForwarding && this.sshConnection instanceof SSH2Connection) {
                     const socksPort = await findRandomPort();
                     this.socksTunnel = await this.sshConnection!.addTunnel({
                         name: `ssh_tunnel_socks_${socksPort}`,
@@ -303,7 +321,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                     this.logger.trace(`SOCKS forwading server closed`);
                 }),
             });
-        } else {
+        } else if (this.sshConnection instanceof SSH2Connection) {
             this.logger.trace(`Opening tunnel ${localPort}(local) => ${remotePortOrSocketPath}(remote)`);
             const tunnelConfig = await this.sshConnection!.addTunnel({
                 name: `ssh_tunnel_${localPort}_${remotePortOrSocketPath}`,
@@ -314,7 +332,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
             });
             disposables.push({
                 dispose: () => {
-                    this.sshConnection?.closeTunnel(tunnelConfig.name);
+                    (this.sshConnection as SSH2Connection).closeTunnel(tunnelConfig.name);
                     this.logger.trace(`Tunnel ${tunnelConfig.name} closed`);
                 }
             });
@@ -450,9 +468,9 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
         disposeAll(this.tunnels);
         // If there's proxy connections then just close the parent connection
         if (this.proxyConnections.length) {
-            this.proxyConnections[0].close();
+            this.proxyConnections[0].disconnect();
         } else {
-            this.sshConnection?.close();
+            this.sshConnection?.disconnect();
         }
         this.proxyCommandProcess?.kill();
         this.labelFormatterDisposable?.dispose();
