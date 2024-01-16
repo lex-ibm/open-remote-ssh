@@ -246,45 +246,9 @@ print_install_results_and_exit() {
 
 # Check if platform is supported
 KERNEL="$(uname -s)"
-case $KERNEL in
-    Darwin)
-        PLATFORM="darwin"
-        ;;
-    Linux)
-        PLATFORM="linux"
-        ;;
-    FreeBSD)
-        PLATFORM="freebsd"
-        ;;
-    DragonFly)
-        PLATFORM="dragonfly"
-        ;;
-    *)
-        echo "Error platform not supported: $KERNEL"
-        print_install_results_and_exit 1
-        ;;
-esac
 
 # Check machine architecture
 ARCH="$(uname -m)"
-case $ARCH in
-    x86_64 | amd64)
-        SERVER_ARCH="x64"
-        ;;
-    armv7l | armv8l)
-        SERVER_ARCH="armhf"
-        ;;
-    arm64 | aarch64)
-        SERVER_ARCH="arm64"
-        ;;
-    ppc64le)
-        SERVER_ARCH="ppc64le"
-        ;;
-    *)
-        echo "Error architecture not supported: $ARCH"
-        print_install_results_and_exit 1
-        ;;
-esac
 
 # https://www.freedesktop.org/software/systemd/man/os-release.html
 OS_RELEASE_ID="$(grep -i '^ID=' /etc/os-release 2>/dev/null | sed 's/^ID=//gi' | sed 's/"//g')"
