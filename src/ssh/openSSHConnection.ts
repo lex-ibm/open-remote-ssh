@@ -2,6 +2,7 @@ import {EventEmitter} from "events";
 import {ISSHConnection, SSHConnectConfig, SSHConstants, SSHDefaultOptions, SSHTunnelConfig} from "./sshConnectionCommons";
 import {ChildProcessWithoutNullStreams, spawn} from "child_process";
 import fs from "fs";
+import {isWindows} from "../common/platform";
 
 export default class OpenSSHConnection extends EventEmitter implements ISSHConnection {
     public config: SSHConnectConfig;
@@ -11,12 +12,14 @@ export default class OpenSSHConnection extends EventEmitter implements ISSHConne
     private __err: Error | null = null;
     private sshProcess: ChildProcessWithoutNullStreams | null = null;
     private tunnelConfig: SSHTunnelConfig;
+    private askPass: string | undefined;
 
-    constructor(options: SSHConnectConfig, tunnelConfig: SSHTunnelConfig) {
+    constructor(options: SSHConnectConfig, tunnelConfig: SSHTunnelConfig, askPass?: string) {
         super();
         this.config = Object.assign({}, SSHDefaultOptions, options);
         this.config.uniqueId = this.config.uniqueId || `${this.config.username}@${this.config.host}`;
         this.tunnelConfig = tunnelConfig;
+        this.askPass = askPass;
     }
 
     override emit(channel: string, status: string, payload?: any): boolean {
@@ -47,7 +50,12 @@ export default class OpenSSHConnection extends EventEmitter implements ISSHConne
             }
 
             const sshArgs = this.getSSHArgs();
-            this.sshProcess = spawn('ssh', sshArgs);
+            this.sshProcess = spawn(isWindows ? 'ssh.exe' : 'ssh', sshArgs, {
+                env: {
+                    ...process.env,
+                    SSH_ASKPASS: this.askPass || ''
+                }
+            });
 
             this.sshProcess.on('exit', (code, signal) => {
                 console.log(`ssh process exited with code ${code} and signal ${signal}`);

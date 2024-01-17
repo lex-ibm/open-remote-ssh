@@ -88,7 +88,8 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
         const remotePlatformMap = remoteSSHconfig.get<Record<string, string>>('remotePlatform', {});
         const remoteServerListenOnSocket = remoteSSHconfig.get<boolean>('remoteServerListenOnSocket', false)!;
         const connectTimeout = remoteSSHconfig.get<number>('connectTimeout', 60)!;
-        const useOpenSSH = remoteSSHconfig.get<boolean>('useOpenSSH', false)!;
+        const useOpenSSH = remoteSSHconfig.get<boolean>('experimental.useOpenSSH', false)!;
+        const sshAskpass = remoteSSHconfig.get<string>('experimental.SSH_ASKPASS');
 
         return vscode.window.withProgress({
             title: `Setting up SSH Host ${sshDest.hostname}`,
@@ -196,7 +197,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                         localPort: socksPort,
                         socks: true
                     };
-                    this.sshConnection = new OpenSSHConnection(connectConfig, this.socksTunnel);
+                    this.sshConnection = new OpenSSHConnection(connectConfig, this.socksTunnel, sshAskpass);
 
                 } else {
                     this.sshConnection = new SSH2Connection(connectConfig);

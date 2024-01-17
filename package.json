@@ -109,6 +109,11 @@
 					"type": "boolean",
 					"description": "When true, the system's OpenSSH client will be used instead of the SSH2 node module. This is an experimental feature and may not work for all SSH servers.",
 					"default": false
+				},
+				"remote.SSH.experimental.SSH_ASKPASS": {
+					"type": "string",
+					"description": "When set, the value will be used as the SSH_ASKPASS environment variable when connecting to a remote (only used with OpenSSH).",
+					"default": ""
 				}
 			}
 		},
